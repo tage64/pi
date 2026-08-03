@@ -219,6 +219,10 @@
       "$ref": "#/$defs/KeybindingValue",
       "description": "Save thinking level"
     },
+    "app.agent.pause": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Pause or resume the agent at the next turn boundary"
+    },
     "app.model.cycleForward": {
       "$ref": "#/$defs/KeybindingValue",
       "description": "Cycle to next model"
