@@ -3292,6 +3292,11 @@ export class InteractiveMode {
 				await this.handleCompactCommand(customInstructions);
 				return;
 			}
+			if (text === "/retry") {
+				this.editor.setText("");
+				await this.handleRetryCommand();
+				return;
+			}
 			if (text === "/reload") {
 				this.editor.setText("");
 				await this.handleReloadCommand();
@@ -7047,6 +7052,21 @@ export class InteractiveMode {
 			await this.session.compact(customInstructions);
 		} catch {
 			// Ignore, will be emitted as an event
+		}
+	}
+
+	private async handleRetryCommand(): Promise<void> {
+		if (!this.session.isIdle) {
+			this.showWarning(
+				"Agent is busy. Wait for the current run to finish (or press Esc to abort it) before retrying.",
+			);
+			return;
+		}
+
+		try {
+			await this.session.retryLastTurn();
+		} catch (error) {
+			this.showError(error instanceof Error ? error.message : String(error));
 		}
 	}
 
