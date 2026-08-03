@@ -38,6 +38,10 @@ const APP_KEYBINDINGS = {
 		defaultKeys: "ctrl+s",
 		description: "Save thinking level",
 	},
+	"app.agent.pause": {
+		defaultKeys: "ctrl+q",
+		description: "Pause or resume the agent at the next turn boundary",
+	},
 	"app.model.cycleForward": {
 		defaultKeys: "ctrl+p",
 		description: "Cycle to next model",
