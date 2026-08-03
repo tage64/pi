@@ -151,6 +151,7 @@ This routing remains configurable through the ordinary action bindings. For exam
 | `app.model.cycleBackward` | `shift+ctrl+p` (`alt+p` on Windows and WSL) | Cycle to previous model |
 | `app.thinking.cycle` | `shift+tab` | Cycle thinking level |
 | `app.thinking.toggle` | `ctrl+t` | Collapse or expand thinking blocks |
+| `app.agent.pause` | `ctrl+q` | Pause or resume the agent at the next turn boundary (`/pause`, `/continue`) |
 
 ### Display and Message Queue
 

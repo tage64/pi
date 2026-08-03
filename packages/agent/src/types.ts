@@ -232,6 +232,24 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	) => AgentLoopTurnUpdate | undefined | Promise<AgentLoopTurnUpdate | undefined>;
 
 	/**
+	 * Called after `prepareNextTurn` and before the loop starts the next provider request,
+	 * and also before checking the follow-up queue when the agent would otherwise stop.
+	 *
+	 * Awaiting inside this hook suspends the run at a turn boundary: the current assistant
+	 * message and tool results are already appended to the context, so resuming later sends
+	 * exactly the context that would have been sent without waiting. Nothing is added to or
+	 * removed from the messages the model sees.
+	 *
+	 * Use this to implement a pause gate, e.g. block until the user resumes the run.
+	 * Must unblock when the run's abort signal fires so abort stays responsive;
+	 * rejecting on abort unwinds the run through the normal abort error path.
+	 *
+	 * Contract: must not throw or reject for reasons other than abort.
+	 * Throwing interrupts the low-level agent loop without producing a normal event sequence.
+	 */
+	waitBeforeNextTurn?: (signal?: AbortSignal) => void | Promise<void>;
+
+	/**
 	 * Returns steering messages to inject into the conversation mid-run.
 	 *
 	 * Called after the current assistant turn finishes executing its tool calls, unless `shouldStopAfterTurn` exits first.

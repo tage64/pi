@@ -38,6 +38,8 @@ export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{ name: "new", description: "Start a new session" },
 	{ name: "compact", description: "Manually compact the session context" },
 	{ name: "retry", description: "Retry the last assistant turn after a failure" },
+	{ name: "pause", description: "Pause the agent at the next turn boundary" },
+	{ name: "continue", description: "Resume a paused agent run" },
 	{ name: "resume", description: "Resume a different session" },
 	{ name: "reload", description: "Reload keybindings, extensions, skills, prompts, themes, and context files" },
 	{ name: "quit", description: `Quit ${APP_NAME}` },

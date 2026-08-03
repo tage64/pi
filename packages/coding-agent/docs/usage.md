@@ -52,6 +52,8 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | `/clone` | Duplicate the current active branch into a new session |
 | `/compact [prompt]` | Manually compact context, optionally with custom instructions |
 | `/retry` | Retry the last assistant turn after a failure (no new user message is added) |
+| `/pause` | Pause the agent at the next turn boundary (current turn finishes first) |
+| `/continue` | Resume a paused agent run |
 | `/copy` | Copy last assistant message to clipboard |
 | `/export [file]` | Export session to HTML or JSONL |
 | `/import <file>` | Import and resume a session from a JSONL file |

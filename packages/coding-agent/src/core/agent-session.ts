@@ -183,6 +183,8 @@ export type AgentSessionEvent =
 	  }
 	| { type: "summarization_retry_finished" }
 	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
+	| { type: "pause_start" }
+	| { type: "pause_end" }
 	| { type: "bash_execution_update"; id?: string; delta: string };
 
 /** Listener function for agent session events */
@@ -341,6 +343,14 @@ export class AgentSession {
 
 	// Retry state
 	private _retryAbortController: AbortController | undefined = undefined;
+
+	// Pause state: a requested pause takes effect at the next turn boundary
+	// (after the in-flight assistant turn and its tool calls complete, before the
+	// next provider request). While paused, the run is suspended inside the loop's
+	// waitBeforeNextTurn hook; resuming sends exactly the context that would have
+	// been sent without pausing, so the model never notices.
+	private _pauseRequested = false;
+	private _pauseWait: { promise: Promise<void>; resolve: () => void } | undefined = undefined;
 	private _retryAttempt = 0;
 
 	// Bash execution state
@@ -403,6 +413,7 @@ export class AgentSession {
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
 		this._installAgentToolHooks();
 		this._installAgentNextTurnRefresh();
+		this._installAgentPauseGate();
 
 		this._buildRuntime({
 			activeToolNames: this._initialActiveToolNames,
@@ -581,6 +592,48 @@ export class AgentSession {
 				thinkingLevel: this.agent.state.thinkingLevel,
 			};
 		};
+	}
+
+	private _installAgentPauseGate(): void {
+		const previousWait = this.agent.waitBeforeNextTurn;
+		this.agent.waitBeforeNextTurn = async (signal) => {
+			await previousWait?.(signal);
+			await this._waitIfPauseRequested(signal);
+		};
+	}
+
+	private async _waitIfPauseRequested(signal?: AbortSignal): Promise<void> {
+		if (!this._pauseRequested || signal?.aborted) {
+			return;
+		}
+		if (!this._pauseWait) {
+			let resolve = () => {};
+			const promise = new Promise<void>((r) => {
+				resolve = r;
+			});
+			this._pauseWait = { promise, resolve };
+		}
+		this._emit({ type: "pause_start" });
+
+		// Aborting the run releases the gate and unwinds the loop through the
+		// normal error path (handleRunFailure), which marks the turn aborted.
+		let aborted = false;
+		const onAbort = () => {
+			aborted = true;
+			this._pauseWait?.resolve();
+		};
+		signal?.addEventListener("abort", onAbort, { once: true });
+		try {
+			await this._pauseWait.promise;
+		} finally {
+			signal?.removeEventListener("abort", onAbort);
+			this._pauseWait = undefined;
+			this._pauseRequested = false;
+			this._emit({ type: "pause_end" });
+		}
+		if (aborted || signal?.aborted) {
+			throw new Error("Aborted");
+		}
 	}
 
 	// =========================================================================
@@ -885,6 +938,9 @@ export class AgentSession {
 			this.abortCompaction();
 			this.abortBranchSummary();
 			this.abortBash();
+			// Clear a latched pause request so it cannot leak into a session that
+			// replaces this one. An actively paused run is released by abort().
+			this.clearPauseRequest();
 			this.agent.abort();
 		} catch {
 			// Dispose must succeed even if an abort hook throws.
@@ -1619,8 +1675,82 @@ export class AgentSession {
 	 */
 	async abort(): Promise<void> {
 		this.abortRetry();
+		// Clear a latched pause request that has not taken effect yet: abort
+		// (Esc) cancels pending user intent, and a stale latch would otherwise
+		// silently hijack the next prompt with an unexpected pause. An actively
+		// paused run is released by agent.abort() below through the gate's abort
+		// listener.
+		this.clearPauseRequest();
 		this.agent.abort();
 		await this.waitForIdle();
+	}
+
+	/**
+	 * Request the run to pause at the next turn boundary.
+	 *
+	 * The in-flight assistant turn (streaming response and its tool calls) finishes
+	 * normally; the run then suspends before the next provider request. While paused,
+	 * steer() and followUp() still queue messages - they are processed on resume.
+	 * Resuming continues with exactly the context that would have been sent without
+	 * pausing, so the model never notices the interruption.
+	 *
+	 * The request latches: if the current run ends before reaching a turn boundary,
+	 * the pause applies to the next run instead. No-op when a pause is already
+	 * requested or active.
+	 */
+	pause(): void {
+		this._pauseRequested = true;
+	}
+
+	/**
+	 * Resume a paused (or pause-requested) run. No-op when not paused.
+	 */
+	resume(): void {
+		if (!this._pauseRequested && !this._pauseWait) {
+			return;
+		}
+		if (this._pauseWait) {
+			// Actively waiting at a turn boundary: releasing the gate clears the
+			// request in the waiter's finally block.
+			this._pauseWait.resolve();
+		} else {
+			this._pauseRequested = false;
+		}
+	}
+
+	/**
+	 * Clear a latched pause request that has not taken effect yet.
+	 *
+	 * Does NOT release an active pause (a run suspended at a turn boundary):
+	 * that gate is only released by resume() or by aborting the run. Returns
+	 * true when a latched request was cleared.
+	 */
+	clearPauseRequest(): boolean {
+		if (this._pauseRequested && !this._pauseWait) {
+			this._pauseRequested = false;
+			return true;
+		}
+		return false;
+	}
+
+	/** Toggle pause/resume. Returns the new effective state. */
+	togglePause(): "pause_requested" | "resumed" {
+		if (this._pauseRequested || this._pauseWait) {
+			this.resume();
+			return "resumed";
+		}
+		this.pause();
+		return this._pauseRequested ? "pause_requested" : "resumed";
+	}
+
+	/** Whether a pause has been requested (not yet at a turn boundary) or is active. */
+	get pauseRequested(): boolean {
+		return this._pauseRequested;
+	}
+
+	/** Whether the run is currently suspended at a turn boundary. */
+	get isPaused(): boolean {
+		return this._pauseWait !== undefined;
 	}
 
 	async waitForIdle(): Promise<void> {

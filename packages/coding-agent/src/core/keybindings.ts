@@ -17,6 +17,7 @@ export interface AppKeybindings {
 	"app.exit": true;
 	"app.suspend": true;
 	"app.thinking.cycle": true;
+	"app.agent.pause": true;
 	"app.model.cycleForward": true;
 	"app.model.cycleBackward": true;
 	"app.model.select": true;
@@ -99,6 +100,10 @@ export const KEYBINDINGS = {
 	"app.thinking.cycle": {
 		defaultKeys: "shift+tab",
 		description: "Cycle thinking level",
+	},
+	"app.agent.pause": {
+		defaultKeys: "ctrl+q",
+		description: "Pause or resume the agent at the next turn boundary",
 	},
 	"app.model.cycleForward": {
 		defaultKeys: "ctrl+p",

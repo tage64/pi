@@ -254,8 +254,16 @@ async function runLoop(
 				return;
 			}
 
+			// Give hosts a chance to suspend the run at the turn boundary (e.g. pause)
+			// before steering messages are drained and the next provider request starts.
+			await config.waitBeforeNextTurn?.(signal);
+
 			pendingMessages = (await config.getSteeringMessages?.()) || [];
 		}
+
+		// Give hosts a chance to suspend the run (e.g. pause) before the agent stops,
+		// so queued follow-up messages are not processed while suspended.
+		await config.waitBeforeNextTurn?.(signal);
 
 		// Agent would stop here. Check for follow-up messages.
 		const followUpMessages = (await config.getFollowUpMessages?.()) || [];

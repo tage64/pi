@@ -4,7 +4,7 @@ import { theme } from "../theme/theme.ts";
 import { CountdownTimer } from "./countdown-timer.ts";
 import { keyText } from "./keybinding-hints.ts";
 
-export type StatusIndicatorKind = "working" | "retry" | "compaction" | "branchSummary";
+export type StatusIndicatorKind = "working" | "retry" | "compaction" | "branchSummary" | "paused";
 
 export class StatusIndicator extends Loader {
 	readonly kind: StatusIndicatorKind;
@@ -68,6 +68,18 @@ export class RetryStatusIndicator extends StatusIndicator {
 		this.countdown?.dispose();
 		this.countdown = undefined;
 		super.dispose();
+	}
+}
+
+export class PausedStatusIndicator extends StatusIndicator {
+	constructor(ui: TUI) {
+		super(
+			"paused",
+			ui,
+			(spinner) => theme.fg("warning", spinner),
+			(text) => theme.fg("muted", text),
+			`Paused (${keyText("app.agent.pause")} or /continue to resume)`,
+		);
 	}
 }
 
