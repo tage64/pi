@@ -155,6 +155,7 @@ On native Windows, `app.suspend` has no default because Windows terminals do not
 | `app.thinking.cycle` | `shift+tab` | Cycle thinking level |
 | `app.thinking.save` | `ctrl+s` | Save current thinking level to settings |
 | `app.thinking.toggle` | `ctrl+t` | Collapse or expand thinking blocks |
+| `app.agent.pause` | `ctrl+q` | Pause or resume the agent at the next turn boundary (`/pause`, `/continue`) |
 
 ### Display and Message Queue
 

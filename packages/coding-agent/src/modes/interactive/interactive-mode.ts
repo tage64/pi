@@ -160,6 +160,7 @@ import {
 	BranchSummaryStatusIndicator,
 	CompactionStatusIndicator,
 	IdleStatus,
+	PausedStatusIndicator,
 	RetryStatusIndicator,
 	type StatusIndicator,
 	WorkingStatusIndicator,
@@ -2997,6 +2998,7 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("app.thinking.cycle", () => this.cycleThinkingLevel());
 		this.defaultEditor.onAction("app.model.cycleForward", () => this.cycleModel("forward"));
 		this.defaultEditor.onAction("app.model.cycleBackward", () => this.cycleModel("backward"));
+		this.defaultEditor.onAction("app.agent.pause", () => this.handleTogglePause());
 
 		// Global debug handler on TUI (works regardless of focus)
 		this.ui.onDebug = () => this.handleDebugCommand();
@@ -3193,6 +3195,16 @@ export class InteractiveMode {
 			if (text === "/retry") {
 				this.editor.setText("");
 				await this.handleRetryCommand();
+				return;
+			}
+			if (text === "/pause") {
+				this.editor.setText("");
+				this.handlePauseCommand();
+				return;
+			}
+			if (text === "/continue") {
+				this.editor.setText("");
+				this.handleContinueCommand();
 				return;
 			}
 			if (text === "/reload") {
@@ -3661,6 +3673,18 @@ export class InteractiveMode {
 
 			case "summarization_retry_finished": {
 				this.clearStatusIndicator("retry");
+				this.ui.requestRender();
+				break;
+			}
+
+			case "pause_start": {
+				this.showStatusIndicator(new PausedStatusIndicator(this.ui));
+				this.ui.requestRender();
+				break;
+			}
+
+			case "pause_end": {
+				this.clearStatusIndicator("paused");
 				this.ui.requestRender();
 				break;
 			}
@@ -6846,6 +6870,42 @@ export class InteractiveMode {
 			await this.session.retryLastTurn();
 		} catch (error) {
 			this.showError(error instanceof Error ? error.message : String(error));
+		}
+	}
+
+	private handlePauseCommand(): void {
+		if (this.session.isPaused) {
+			this.showStatus(`Already paused. Use /continue or ${keyText("app.agent.pause")} to resume.`);
+			return;
+		}
+		if (this.session.pauseRequested) {
+			this.showStatus("Pause already requested, takes effect at the next turn boundary.");
+			return;
+		}
+		this.session.pause();
+		this.showStatus(
+			this.session.isStreaming
+				? "Pausing after the current turn..."
+				: "Pause requested, takes effect during the next run.",
+		);
+	}
+
+	private handleContinueCommand(): void {
+		if (!this.session.pauseRequested && !this.session.isPaused) {
+			this.showWarning("Agent is not paused.");
+			return;
+		}
+		this.session.resume();
+	}
+
+	private handleTogglePause(): void {
+		const state = this.session.togglePause();
+		if (state === "pause_requested") {
+			this.showStatus(
+				this.session.isStreaming
+					? "Pausing after the current turn..."
+					: "Pause requested, takes effect during the next run.",
+			);
 		}
 	}
 

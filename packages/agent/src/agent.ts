@@ -130,6 +130,12 @@ export interface AgentOptions {
 		context: PrepareNextTurnContext,
 		signal?: AbortSignal,
 	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
+	/**
+	 * Called at every turn boundary before the next provider request (and before the
+	 * follow-up queue is checked when the agent would stop). Awaiting suspends the run;
+	 * the messages the model sees on resume are identical to an uninterrupted run.
+	 */
+	waitBeforeNextTurn?: (signal?: AbortSignal) => void | Promise<void>;
 	steeringMode?: QueueMode;
 	followUpMode?: QueueMode;
 	sessionId?: string;
@@ -213,6 +219,7 @@ export class Agent {
 		context: PrepareNextTurnContext,
 		signal?: AbortSignal,
 	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
+	public waitBeforeNextTurn?: (signal?: AbortSignal) => void | Promise<void>;
 	private activeRun?: ActiveRun;
 	/** Session identifier forwarded to providers for cache-aware backends. */
 	public sessionId?: string;
@@ -241,6 +248,7 @@ export class Agent {
 		this.prepareRequest = runtimeOptions.prepareRequest;
 		this.prepareNextTurn = runtimeOptions.prepareNextTurn;
 		this.prepareNextTurnWithContext = runtimeOptions.prepareNextTurnWithContext;
+		this.waitBeforeNextTurn = runtimeOptions.waitBeforeNextTurn;
 		this.steeringQueue = new PendingMessageQueue(runtimeOptions.steeringMode ?? "one-at-a-time");
 		this.followUpQueue = new PendingMessageQueue(runtimeOptions.followUpMode ?? "one-at-a-time");
 		this.sessionId = runtimeOptions.sessionId;
@@ -486,6 +494,9 @@ export class Agent {
 							return await this.prepareNextTurn?.(this.signal);
 						}
 					: undefined,
+			waitBeforeNextTurn: this.waitBeforeNextTurn
+				? async (signal) => await this.waitBeforeNextTurn?.(signal)
+				: undefined,
 			convertToLlm: this.convertToLlm,
 			transformContext: this.transformContext,
 			getApiKey: this.getApiKey,
