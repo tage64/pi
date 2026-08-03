@@ -115,6 +115,8 @@ See [Themes](themes.md) and [Terminal Setup](terminal-setup.md) for format and p
 
 Keep `retry.provider.maxRetries` at `0` unless provider-level retries are required. Provider retries can delay Pi from handling quota and usage-limit errors itself.
 
+If a run fails after all automatic retries are exhausted (or with an error classified as non-retryable), the `/retry` command restarts the last assistant turn without adding a new user message. The failed message is removed from the context sent to the model (it stays in the session log), so the conversation the model sees is identical to a turn that simply succeeded later.
+
 ## Shell
 
 | Setting | Type | Default | Description |
