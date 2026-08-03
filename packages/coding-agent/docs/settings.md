@@ -151,6 +151,8 @@ When a provider requests a retry delay longer than `retry.provider.maxRetryDelay
 
 Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explicitly needed. Setting it above `0` can make SDK/provider retries handle out-of-usage-limit errors before Pi sees them, which may block the agent until the provider quota resets in some circumstances.
 
+If a run fails after all automatic retries are exhausted (or with an error classified as non-retryable), the `/retry` command restarts the last assistant turn without adding a new user message. The failed message is removed from the context sent to the model (it stays in the session log), so the conversation the model sees is identical to a turn that simply succeeded later.
+
 ```json
 {
   "retry": {

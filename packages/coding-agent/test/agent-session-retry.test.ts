@@ -319,4 +319,119 @@ describe("AgentSession retry", () => {
 		await session.prompt("Follow-up");
 		expect(callCount).toBe(4);
 	});
+
+	describe("retryLastTurn (manual /retry)", () => {
+		async function createNonRetryableErrorSession(options?: { errorMessage?: string; succeedOnRetry?: boolean }) {
+			const errorMessage = options?.errorMessage ?? "Invalid API key";
+			const succeedOnRetry = options?.succeedOnRetry ?? true;
+			let callCount = 0;
+
+			const model = getModel("anthropic", "claude-sonnet-4-5")!;
+			const agent = new Agent({
+				getApiKey: () => "test-key",
+				initialState: { model, systemPrompt: "Test", tools: [] },
+				streamFn: () => {
+					callCount++;
+					const stream = new MockAssistantStream();
+					queueMicrotask(() => {
+						if (callCount === 1 || !succeedOnRetry) {
+							const msg = createAssistantMessage("", {
+								stopReason: "error",
+								errorMessage,
+							});
+							stream.push({ type: "start", partial: msg });
+							stream.push({ type: "error", reason: "error", error: msg });
+						} else {
+							const msg = createAssistantMessage("Recovered");
+							stream.push({ type: "start", partial: msg });
+							stream.push({ type: "done", reason: "stop", message: msg });
+						}
+					});
+					return stream;
+				},
+			});
+
+			const sessionManager = SessionManager.inMemory();
+			const settingsManager = SettingsManager.create(tempDir, tempDir);
+			const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
+			const modelRegistry = await createModelRegistry(authStorage, tempDir);
+			await authStorage.modify("anthropic", async () => ({ type: "api_key", key: "test-key" }));
+			// Auto-retry must not kick in for the non-retryable error
+			settingsManager.applyOverrides({ retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } });
+
+			session = new AgentSession({
+				agent,
+				sessionManager,
+				settingsManager,
+				cwd: tempDir,
+				modelRuntime: getModelRuntime(modelRegistry),
+				resourceLoader: createTestResourceLoader(),
+			});
+
+			return { session, getCallCount: () => callCount };
+		}
+
+		it("retries a non-retryable error without adding a user message", async () => {
+			const created = await createNonRetryableErrorSession();
+
+			await created.session.prompt("Test");
+			expect(created.getCallCount()).toBe(1);
+			expect(created.session.isStreaming).toBe(false);
+
+			await created.session.retryLastTurn();
+
+			expect(created.getCallCount()).toBe(2);
+			const messages = created.session.state.messages;
+			// user, assistant (retried, successful) - no extra user message
+			expect(messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+			const last = messages[messages.length - 1] as AssistantMessage;
+			expect(last.stopReason).toBe("stop");
+			expect(last.content[0]).toEqual({ type: "text", text: "Recovered" });
+		});
+
+		it("retries after the auto-retry budget is exhausted", async () => {
+			const created = await createSession({ failCount: 99, maxRetries: 1 });
+
+			await created.session.prompt("Test");
+			expect(created.getCallCount()).toBe(2); // initial + 1 auto-retry
+			expect(created.session.retryAttempt).toBe(0); // reset after final failure
+
+			// The mock keeps failing, but the manual retry must still attempt once more.
+			await expect(created.session.retryLastTurn()).resolves.toBeUndefined();
+			expect(created.getCallCount()).toBeGreaterThanOrEqual(3);
+			expect(created.session.isStreaming).toBe(false);
+			expect(created.session.isRetrying).toBe(false);
+		});
+
+		it("throws when the last assistant message completed successfully", async () => {
+			const created = await createSession({ failCount: 0 });
+			await created.session.prompt("Test");
+
+			await expect(created.session.retryLastTurn()).rejects.toThrow(/completed successfully/);
+			expect(created.getCallCount()).toBe(1);
+		});
+
+		it("throws when the last message is not an assistant message", async () => {
+			const created = await createSession({ failCount: 0 });
+			// Fresh session has no messages at all
+			await expect(created.session.retryLastTurn()).rejects.toThrow(/not an assistant message/);
+		});
+
+		it("a failed manual retry can be retried again", async () => {
+			const created = await createNonRetryableErrorSession({ succeedOnRetry: false });
+
+			await created.session.prompt("Test");
+			expect(created.getCallCount()).toBe(1);
+
+			await created.session.retryLastTurn();
+			expect(created.getCallCount()).toBe(2);
+
+			await created.session.retryLastTurn();
+			expect(created.getCallCount()).toBe(3);
+
+			const messages = created.session.state.messages;
+			expect(messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+			expect((messages[messages.length - 1] as AssistantMessage).stopReason).toBe("error");
+		});
+	});
 });

@@ -2943,6 +2943,75 @@ export class AgentSession {
 		this._retryAbortController?.abort();
 	}
 
+	/**
+	 * Manually retry the last assistant turn after a failed run (e.g. /retry).
+	 *
+	 * Unlike auto-retry, this works for any error classification and after the retry
+	 * budget was exhausted. The failed assistant message is removed from the agent
+	 * context (it stays in the session log for history) and the agent continues from
+	 * the previous message, so the conversation the LLM sees is identical to a turn
+	 * that simply succeeded later - no "continue" user message is added.
+	 *
+	 * Subsequent failures go through the normal auto-retry flow with a fresh budget.
+	 *
+	 * @throws Error if the session is busy, the last message is not a failed assistant
+	 * message, no model is selected, or auth is missing.
+	 */
+	async retryLastTurn(): Promise<void> {
+		if (!this.isIdle) {
+			throw new Error("Agent is busy. Wait for the current run to finish (or abort it) before retrying.");
+		}
+
+		const messages = this.agent.state.messages;
+		const lastMessage = messages[messages.length - 1];
+		if (!lastMessage || lastMessage.role !== "assistant") {
+			throw new Error("Nothing to retry: the last message is not an assistant message.");
+		}
+		const failed = lastMessage as AssistantMessage;
+		if (failed.stopReason === "stop" || failed.stopReason === "length") {
+			throw new Error("Nothing to retry: the last assistant message completed successfully.");
+		}
+
+		// Validate model and auth (mirrors prompt() preflight)
+		if (!this.model) {
+			throw new Error(formatNoModelSelectedMessage());
+		}
+		const hasConfiguredAuth =
+			this._modelRuntime.hasConfiguredAuth(this.model.provider) ||
+			(await this._modelRuntime.checkAuth(this.model.provider)) !== undefined;
+		if (!hasConfiguredAuth) {
+			throw new Error(formatNoApiKeyFoundMessage(this.model.provider));
+		}
+
+		// Context overflow is handled by compaction, not a plain retry.
+		// Run the compaction check on the failed message; if it compacts, the
+		// agent continuation after compaction replaces the retry.
+		if (await this._checkCompaction(failed)) {
+			return;
+		}
+
+		// Remove the failed assistant message from agent context. It remains in the
+		// session log, so history/export keep a record of the failure.
+		this.agent.state.messages = this.agent.state.messages.slice(0, -1);
+
+		// Reset retry state so a fresh auto-retry budget applies to the retried turn.
+		this._retryAttempt = 0;
+		this._lastAssistantMessage = undefined;
+		this._overflowRecoveryAttempted = false;
+
+		this._isAgentRunActive = true;
+		try {
+			await this.agent.continue();
+			while (await this._handlePostAgentRun()) {
+				await this.agent.continue();
+			}
+		} finally {
+			this._systemPromptOverride = undefined;
+			this._flushPendingBashMessages();
+			await this._emitAgentSettled();
+		}
+	}
+
 	/** Whether auto-retry is currently in progress */
 	get isRetrying(): boolean {
 		return this._retryAbortController !== undefined;
