@@ -167,6 +167,7 @@ import {
 } from "./components/status-indicator.ts";
 import { ThinkingSelectorComponent } from "./components/thinking-selector.ts";
 import { ToolExecutionComponent } from "./components/tool-execution.ts";
+import { ToolRunSummaryComponent } from "./components/tool-run-summary.ts";
 import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
@@ -249,6 +250,11 @@ type CompactionCostNotice = {
 };
 
 type RenderSessionItem = AgentMessage | Extract<SessionEntry, { type: "custom" | "usage" }> | CompactionCostNotice;
+
+/** Whether an assistant message streams visible text content, which ends a collapsed tool run. */
+function assistantMessageHasVisibleText(message: AssistantMessage): boolean {
+	return message.content.some((content) => content.type === "text" && content.text.trim().length > 0);
+}
 
 function isCustomSessionEntry(item: RenderSessionItem): item is Extract<SessionEntry, { type: "custom" }> {
 	return "type" in item && item.type === "custom";
@@ -477,6 +483,10 @@ export class InteractiveMode {
 
 	// Thinking block visibility state
 	private hideThinkingBlock = false;
+
+	// Compact tool runs state ("Collapse tool output" setting)
+	private collapsedToolOutput = false;
+	private activeToolGroup: ToolRunSummaryComponent | undefined;
 	private outputPad = 1;
 	private readonly mermaidMarkdownTransformer: MarkdownTransformer = createMermaidMarkdownTransformer({
 		getMode: () => this.settingsManager.getMermaidRenderingMode(),
@@ -617,6 +627,7 @@ export class InteractiveMode {
 
 		// Load hide thinking block setting
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
+		this.collapsedToolOutput = this.settingsManager.getCollapsedToolOutput();
 		this.outputPad = this.settingsManager.getOutputPad();
 
 		// Register themes from resource loader and initialize
@@ -2001,6 +2012,7 @@ export class InteractiveMode {
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
 		this.footerDataProvider.setCwd(this.sessionManager.getCwd());
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
+		this.collapsedToolOutput = this.settingsManager.getCollapsedToolOutput();
 		this.outputPad = this.settingsManager.getOutputPad();
 		this.ui.setShowHardwareCursor(this.settingsManager.getShowHardwareCursor());
 		const clearOnShrink = this.settingsManager.getClearOnShrink();
@@ -3308,6 +3320,7 @@ export class InteractiveMode {
 		switch (event.type) {
 			case "agent_start":
 				this.pendingTools.clear();
+				this.settleToolRunSummaries();
 				// Restore main escape handler if retry handler is still active
 				// (retry success event fires later, but we need main handler now)
 				if (this.retryEscapeHandler) {
@@ -3400,6 +3413,8 @@ export class InteractiveMode {
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
+					// Do not settle the tool run here: a run continues across
+					// assistant messages that issue tool calls without visible text.
 					this.streamingComponent = new AssistantMessageComponent(
 						undefined,
 						this.hideThinkingBlock,
@@ -3418,25 +3433,26 @@ export class InteractiveMode {
 			case "message_update":
 				if (this.streamingComponent && event.message.role === "assistant") {
 					this.streamingMessage = event.message;
+					// Visible assistant text ends the current tool run; the summary
+					// settles in place above this message. Runs of consecutive
+					// tool-only messages keep accumulating into the same summary.
+					if (
+						this.activeToolGroup !== undefined &&
+						!this.activeToolGroup.hasPendingTools() &&
+						assistantMessageHasVisibleText(event.message)
+					) {
+						this.settleToolRunSummaries();
+					}
 					this.streamingComponent.updateContent(this.streamingMessage, true);
 
 					for (const content of this.streamingMessage.content) {
 						if (content.type === "toolCall") {
 							if (!this.pendingTools.has(content.id)) {
-								const component = new ToolExecutionComponent(
+								const component = this.createToolExecutionComponent(
 									content.name,
 									content.id,
 									content.arguments,
-									{
-										showImages: this.settingsManager.getShowImages(),
-										imageWidthCells: this.settingsManager.getImageWidthCells(),
-									},
-									this.getRegisteredToolDefinition(content.name),
-									this.ui,
-									this.sessionManager.getCwd(),
 								);
-								component.setExpanded(this.toolOutputExpanded);
-								this.chatContainer.addChild(component);
 								this.pendingTools.set(content.id, component);
 							} else {
 								const component = this.pendingTools.get(content.id);
@@ -3499,20 +3515,7 @@ export class InteractiveMode {
 			case "tool_execution_start": {
 				let component = this.pendingTools.get(event.toolCallId);
 				if (!component) {
-					component = new ToolExecutionComponent(
-						event.toolName,
-						event.toolCallId,
-						event.args,
-						{
-							showImages: this.settingsManager.getShowImages(),
-							imageWidthCells: this.settingsManager.getImageWidthCells(),
-						},
-						this.getRegisteredToolDefinition(event.toolName),
-						this.ui,
-						this.sessionManager.getCwd(),
-					);
-					component.setExpanded(this.toolOutputExpanded);
-					this.chatContainer.addChild(component);
+					component = this.createToolExecutionComponent(event.toolName, event.toolCallId, event.args);
 					this.pendingTools.set(event.toolCallId, component);
 				}
 				component.markExecutionStarted();
@@ -3549,6 +3552,7 @@ export class InteractiveMode {
 					this.streamingComponent = undefined;
 					this.streamingMessage = undefined;
 				}
+				this.settleToolRunSummaries();
 				this.pendingTools.clear();
 
 				this.ui.requestRender();
@@ -3877,6 +3881,8 @@ export class InteractiveMode {
 		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
 	): void {
 		this.pendingTools.clear();
+		this.activeToolGroup = undefined;
+		let sessionToolRunGroup: ToolRunSummaryComponent | undefined;
 		const renderedPendingTools = new Map<string, ToolExecutionComponent>();
 		// Cache misses are not persisted, unlike successful cache-warming usage.
 		// Re-derive them and inject them after the assistant messages that paid for them.
@@ -3891,6 +3897,7 @@ export class InteractiveMode {
 
 		for (const item of items) {
 			if (isCustomSessionEntry(item)) {
+				sessionToolRunGroup = undefined;
 				this.addCustomEntryToChat(item);
 				continue;
 			}
@@ -3899,6 +3906,7 @@ export class InteractiveMode {
 				continue;
 			}
 			if (isCompactionCostNotice(item)) {
+				sessionToolRunGroup = undefined;
 				this.addCompactionCostNotice(item);
 				continue;
 			}
@@ -3906,6 +3914,11 @@ export class InteractiveMode {
 			const message = item;
 			// Assistant messages need special handling for tool calls
 			if (message.role === "assistant") {
+				// Assistant text ends the previous tool run grouping; consecutive
+				// tool-only assistant messages continue accumulating into it.
+				if (assistantMessageHasVisibleText(message)) {
+					sessionToolRunGroup = undefined;
+				}
 				this.addMessageToChat(message);
 				// Render tool call components
 				for (const content of message.content) {
@@ -3923,7 +3936,17 @@ export class InteractiveMode {
 							this.sessionManager.getCwd(),
 						);
 						component.setExpanded(this.toolOutputExpanded);
-						this.chatContainer.addChild(component);
+						if (this.collapsedToolOutput) {
+							component.setCollapsed(true);
+							if (sessionToolRunGroup === undefined) {
+								// Anchor the summary to the assistant message that issued the calls.
+								sessionToolRunGroup = new ToolRunSummaryComponent(message.timestamp);
+								this.chatContainer.addChild(sessionToolRunGroup);
+							}
+							sessionToolRunGroup.addToolComponent(component);
+						} else {
+							this.chatContainer.addChild(component);
+						}
 
 						if (message.stopReason === "aborted" || message.stopReason === "error") {
 							let errorMessage: string;
@@ -3953,8 +3976,10 @@ export class InteractiveMode {
 					component.updateResult(message);
 					renderedPendingTools.delete(message.toolCallId);
 				}
+				sessionToolRunGroup?.noteResultTimestamp(message.timestamp);
 			} else {
 				// All other messages use standard rendering
+				sessionToolRunGroup = undefined;
 				this.addMessageToChat(message, options);
 			}
 		}
@@ -4462,6 +4487,102 @@ export class InteractiveMode {
 		this.showStatus(`Thinking blocks: ${this.hideThinkingBlock ? "hidden" : "visible"}`);
 	}
 
+	/**
+	 * Create a tool execution component and add it to the chat. When the
+	 * "Collapse tool output" setting is enabled, tool components are grouped
+	 * into a ToolRunSummaryComponent that renders one compact summary line.
+	 */
+	private createToolExecutionComponent(toolName: string, toolCallId: string, args: any): ToolExecutionComponent {
+		const component = new ToolExecutionComponent(
+			toolName,
+			toolCallId,
+			args,
+			{
+				showImages: this.settingsManager.getShowImages(),
+				imageWidthCells: this.settingsManager.getImageWidthCells(),
+			},
+			this.getRegisteredToolDefinition(toolName),
+			this.ui,
+			this.sessionManager.getCwd(),
+		);
+		component.setExpanded(this.toolOutputExpanded);
+		if (this.collapsedToolOutput) {
+			component.setCollapsed(true);
+			if (this.activeToolGroup === undefined) {
+				this.activeToolGroup = new ToolRunSummaryComponent();
+				this.chatContainer.addChild(this.activeToolGroup);
+			}
+			this.activeToolGroup.addToolComponent(component);
+		} else {
+			this.chatContainer.addChild(component);
+		}
+		return component;
+	}
+
+	private settleToolRunSummaries(): void {
+		this.activeToolGroup?.forceComplete();
+		this.activeToolGroup = undefined;
+	}
+
+	private switchCollapsedToolOutput(collapsed: boolean): void {
+		if (collapsed === this.collapsedToolOutput) return;
+		this.collapsedToolOutput = collapsed;
+		this.settingsManager.setCollapsedToolOutput(collapsed);
+
+		if (this.streamingComponent || this.session.isStreaming) {
+			// A run is in flight: convert in place so partial tool output is not lost.
+			if (collapsed) {
+				this.collapseRunningToolOutput();
+			} else {
+				this.expandRunningToolOutput();
+			}
+			this.ui.requestRender();
+			return;
+		}
+
+		this.rebuildChatFromMessages();
+		this.ui.requestRender();
+	}
+
+	/** While collapsing mid-run, move direct tool components into a summary group. */
+	private collapseRunningToolOutput(): void {
+		const children = this.chatContainer.children;
+		// Only the trailing run of tool components belongs to the active tool
+		// run; older turns are separated by assistant message components and
+		// stay expanded until the next rebuild.
+		let start = children.length;
+		while (start > 0 && children[start - 1] instanceof ToolExecutionComponent) {
+			start--;
+		}
+		const tools = children.splice(start) as ToolExecutionComponent[];
+		if (tools.length === 0) {
+			return;
+		}
+		const group = new ToolRunSummaryComponent();
+		for (const tool of tools) {
+			tool.setCollapsed(true);
+			group.addToolComponent(tool);
+		}
+		this.activeToolGroup = group;
+		children.push(group);
+	}
+
+	/** While expanding mid-run, unwrap summary groups back into tool components. */
+	private expandRunningToolOutput(): void {
+		const children = this.chatContainer.children;
+		for (let i = children.length - 1; i >= 0; i--) {
+			const child = children[i];
+			if (child instanceof ToolRunSummaryComponent) {
+				const tools = child.getToolComponents();
+				children.splice(i, 1, ...tools);
+				for (const tool of tools) {
+					tool.setCollapsed(false);
+				}
+			}
+		}
+		this.activeToolGroup = undefined;
+	}
+
 	private async handleOpenExternalEditor(): Promise<void> {
 		const editorCmd = this.settingsManager.getExternalEditorCommand();
 		const content = this.editor.getExpandedText?.() ?? this.editor.getText();
@@ -4799,6 +4920,7 @@ export class InteractiveMode {
 					terminalTheme: this.themeController.getTerminalTheme(),
 					availableThemes: getAvailableThemes(),
 					hideThinkingBlock: this.hideThinkingBlock,
+					collapsedToolOutput: this.collapsedToolOutput,
 					mermaidRenderingMode: this.settingsManager.getMermaidRenderingMode(),
 					collapseChangelog: this.settingsManager.getCollapseChangelog(),
 					enableInstallTelemetry: this.settingsManager.getEnableInstallTelemetry(),
@@ -4899,6 +5021,9 @@ export class InteractiveMode {
 						this.hideThinkingBlock = hidden;
 						this.settingsManager.setHideThinkingBlock(hidden);
 						this.updateThinkingBlockVisibility();
+					},
+					onCollapsedToolOutputChange: (collapsed) => {
+						this.switchCollapsedToolOutput(collapsed);
 					},
 					onMermaidRenderingModeChange: (mode) => {
 						this.settingsManager.setMermaidRenderingMode(mode);
@@ -6243,6 +6368,7 @@ export class InteractiveMode {
 				return;
 			}
 			this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
+			this.collapsedToolOutput = this.settingsManager.getCollapsedToolOutput();
 			this.outputPad = this.settingsManager.getOutputPad();
 			this.rebuildChatFromMessages();
 			chatRestoredBeforeSessionStart = true;
