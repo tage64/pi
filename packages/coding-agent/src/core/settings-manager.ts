@@ -983,6 +983,10 @@ export class SettingsManager {
 		return this.settings.hideThinkingBlock ?? SETTINGS_DEFAULTS.hideThinkingBlock;
 	}
 
+	getCollapsedToolOutput(): boolean {
+		return this.settings.collapsedToolOutput ?? SETTINGS_DEFAULTS.collapsedToolOutput;
+	}
+
 	getExternalEditorCommand(): string {
 		const configuredEditor = this.settings.externalEditor;
 		if (typeof configuredEditor === "string" && configuredEditor.trim() !== "") {
@@ -998,6 +1002,12 @@ export class SettingsManager {
 	setHideThinkingBlock(hide: boolean): void {
 		this.globalSettings.hideThinkingBlock = hide;
 		this.markModified("hideThinkingBlock");
+		this.save();
+	}
+
+	setCollapsedToolOutput(collapsed: boolean): void {
+		this.globalSettings.collapsedToolOutput = collapsed;
+		this.markModified("collapsedToolOutput");
 		this.save();
 	}
 

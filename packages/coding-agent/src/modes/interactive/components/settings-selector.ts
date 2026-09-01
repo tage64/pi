@@ -82,6 +82,7 @@ export interface SettingsConfig {
 	terminalTheme: TerminalTheme;
 	availableThemes: string[];
 	hideThinkingBlock: boolean;
+	collapsedToolOutput: boolean;
 	mermaidRenderingMode: MermaidRenderingMode;
 	collapseChangelog: boolean;
 	enableInstallTelemetry: boolean;
@@ -122,6 +123,7 @@ export interface SettingsCallbacks {
 	onThemeChange: (theme: string) => void;
 	onThemePreview?: (theme: string) => void;
 	onHideThinkingBlockChange: (hidden: boolean) => void;
+	onCollapsedToolOutputChange: (collapsed: boolean) => void;
 	onMermaidRenderingModeChange: (mode: MermaidRenderingMode) => void;
 	onCollapseChangelogChange: (collapsed: boolean) => void;
 	onEnableInstallTelemetryChange: (enabled: boolean) => void;
@@ -577,6 +579,14 @@ export class SettingsSelectorComponent extends Container {
 				values: ["true", "false"],
 			},
 			{
+				id: "collapsed-tool-output",
+				label: "Collapse tool output",
+				description:
+					"Show a run of tool calls as one summary line like [5 tool calls in 12.3s] instead of full tool output",
+				currentValue: config.collapsedToolOutput ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
 				id: "mermaid-rendering",
 				label: "Mermaid diagrams",
 				description: "Render Mermaid code blocks as Unicode diagrams",
@@ -971,6 +981,9 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "hide-thinking":
 						callbacks.onHideThinkingBlockChange(newValue === "true");
+						break;
+					case "collapsed-tool-output":
+						callbacks.onCollapsedToolOutputChange(newValue === "true");
 						break;
 					case "mermaid-rendering":
 						callbacks.onMermaidRenderingModeChange(newValue as MermaidRenderingMode);

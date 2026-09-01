@@ -275,6 +275,12 @@ export const SettingsSchema = Type.Object(
 		branchSummary: Type.Optional(BranchSummarySettingsSchema),
 		retry: Type.Optional(RetrySettingsSchema),
 		hideThinkingBlock: Type.Optional(Type.Boolean({ default: SETTINGS_DEFAULTS.hideThinkingBlock })),
+		collapsedToolOutput: Type.Optional(
+			Type.Boolean({
+				description: "Show tool runs as compact summaries instead of full tool output.",
+				default: SETTINGS_DEFAULTS.collapsedToolOutput,
+			}),
+		),
 		externalEditor: Type.Optional(
 			Type.String({ description: "Command for Ctrl+G external editor; takes precedence over VISUAL and EDITOR." }),
 		),
