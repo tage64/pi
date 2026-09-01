@@ -967,6 +967,10 @@ export class SettingsManager {
 		return this.settings.hideThinkingBlock ?? SETTINGS_DEFAULTS.hideThinkingBlock;
 	}
 
+	getCollapsedToolOutput(): boolean {
+		return this.settings.collapsedToolOutput ?? SETTINGS_DEFAULTS.collapsedToolOutput;
+	}
+
 	getShowCacheMissNotices(): boolean {
 		return this.settings.showCacheMissNotices ?? SETTINGS_DEFAULTS.showCacheMissNotices;
 	}
@@ -986,6 +990,12 @@ export class SettingsManager {
 	setHideThinkingBlock(hide: boolean): void {
 		this.globalSettings.hideThinkingBlock = hide;
 		this.markModified("hideThinkingBlock");
+		this.save();
+	}
+
+	setCollapsedToolOutput(collapsed: boolean): void {
+		this.globalSettings.collapsedToolOutput = collapsed;
+		this.markModified("collapsedToolOutput");
 		this.save();
 	}
 
