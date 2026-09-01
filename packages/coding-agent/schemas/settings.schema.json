@@ -212,6 +212,11 @@
       "type": "boolean",
       "default": false
     },
+    "collapsedToolOutput": {
+      "type": "boolean",
+      "description": "Show tool runs as compact summaries instead of full tool output.",
+      "default": false
+    },
     "showCacheMissNotices": {
       "type": "boolean",
       "description": "Show cache cost and provider recovery notices.",
