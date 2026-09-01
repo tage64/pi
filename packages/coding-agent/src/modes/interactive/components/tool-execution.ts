@@ -42,6 +42,7 @@ export class ToolExecutionComponent extends Container {
 	};
 	private convertedImages: Map<number, { data: string; mimeType: string }> = new Map();
 	private hideComponent = false;
+	private collapsed = false;
 
 	constructor(
 		toolName: string,
@@ -187,6 +188,7 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	private maybeConvertImagesForKitty(): void {
+		if (this.collapsed) return;
 		const caps = getCapabilities();
 		if (caps.images !== "kitty") return;
 		if (!this.result) return;
@@ -214,6 +216,16 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	/** Hide this component entirely; used when it is summarized by a surrounding group. */
+	setCollapsed(collapsed: boolean): void {
+		this.collapsed = collapsed;
+	}
+
+	/** Whether a final result has been delivered to this component. */
+	hasResult(): boolean {
+		return this.result !== undefined && !this.isPartial;
+	}
+
 	setShowImages(show: boolean): void {
 		this.showImages = show;
 		this.updateDisplay();
@@ -230,7 +242,7 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	override render(width: number): string[] {
-		if (this.hideComponent) {
+		if (this.hideComponent || this.collapsed) {
 			return [];
 		}
 

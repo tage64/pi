@@ -48,4 +48,25 @@ describe("SettingsSelectorComponent", () => {
 		cycle("Fullscreen copy on select", 2);
 		expect(onCopyOnSelectChange.mock.calls.flat()).toEqual([false, true]);
 	});
+
+	it("toggles collapsed tool output", () => {
+		const onCollapsedToolOutputChange = vi.fn();
+		const config = {
+			collapsedToolOutput: false,
+			warnings: {},
+			defaultModel: "not set",
+			availableDefaultModels: [],
+			availableThinkingLevels: [],
+			modelThinkingLevels: {},
+			availableThemes: [],
+		} as unknown as SettingsConfig;
+		const callbacks = {
+			onCollapsedToolOutputChange,
+		} as unknown as SettingsCallbacks;
+
+		const list = new SettingsSelectorComponent(config, callbacks).getSettingsList();
+		for (const character of "Collapse tool output") list.handleInput(character);
+		list.handleInput("\r");
+		expect(onCollapsedToolOutputChange.mock.calls.flat()).toEqual([true]);
+	});
 });

@@ -105,6 +105,7 @@ export interface Settings {
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettings;
 	hideThinkingBlock?: boolean;
+	collapsedToolOutput?: boolean; // default: false - show tool runs as compact summaries instead of full tool output
 	showCacheMissNotices?: boolean; // default: false - show prompt-cache miss and compaction cost notices
 	externalEditor?: string; // Command for Ctrl+G external editor; takes precedence over VISUAL/EDITOR
 	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows); supports leading ~ expansion
@@ -916,6 +917,10 @@ export class SettingsManager {
 		return this.settings.hideThinkingBlock ?? false;
 	}
 
+	getCollapsedToolOutput(): boolean {
+		return this.settings.collapsedToolOutput ?? false;
+	}
+
 	getShowCacheMissNotices(): boolean {
 		return this.settings.showCacheMissNotices ?? false;
 	}
@@ -935,6 +940,12 @@ export class SettingsManager {
 	setHideThinkingBlock(hide: boolean): void {
 		this.globalSettings.hideThinkingBlock = hide;
 		this.markModified("hideThinkingBlock");
+		this.save();
+	}
+
+	setCollapsedToolOutput(collapsed: boolean): void {
+		this.globalSettings.collapsedToolOutput = collapsed;
+		this.markModified("collapsedToolOutput");
 		this.save();
 	}
 

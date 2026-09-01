@@ -499,6 +499,29 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("collapsedToolOutput", () => {
+		it("should default to false and persist toggling", async () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getCollapsedToolOutput()).toBe(false);
+
+			manager.setCollapsedToolOutput(true);
+			await manager.flush();
+
+			expect(manager.getCollapsedToolOutput()).toBe(true);
+			const savedSettings = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8"));
+			expect(savedSettings.collapsedToolOutput).toBe(true);
+		});
+
+		it("should load the persisted value on startup", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ collapsedToolOutput: true }));
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getCollapsedToolOutput()).toBe(true);
+		});
+	});
+
 	describe("markdown.mermaid", () => {
 		it("defaults to streaming and persists rendering modes", async () => {
 			const manager = SettingsManager.create(projectDir, agentDir);

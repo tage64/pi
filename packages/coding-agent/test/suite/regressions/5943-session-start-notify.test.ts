@@ -99,6 +99,7 @@ type ReloadCommandContext = {
 	settingsManager: {
 		getHttpIdleTimeoutMs: () => number;
 		getHideThinkingBlock: () => boolean;
+		getCollapsedToolOutput: () => boolean;
 		getOutputPad: () => 0 | 1;
 		getEditorPaddingX: () => number;
 		getAutocompleteMaxVisible: () => number;
@@ -171,6 +172,7 @@ function createReloadCommandContext(overrides: ReloadCommandContextOverrides = {
 		settingsManager: {
 			getHttpIdleTimeoutMs: () => 0,
 			getHideThinkingBlock: () => false,
+			getCollapsedToolOutput: () => false,
 			getOutputPad: () => 1,
 			getEditorPaddingX: () => 1,
 			getAutocompleteMaxVisible: () => 10,

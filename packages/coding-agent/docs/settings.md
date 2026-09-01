@@ -32,6 +32,7 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 | `defaultThinkingLevel` | string | - | Startup thinking level (saved with Ctrl+S in `/thinking`, or edited manually): `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` |
 | `modelThinkingLevels` | object | - | Per-model startup thinking levels keyed by `"provider/modelId"`; configure from `/settings` → Default thinking level per model or edit manually |
 | `hideThinkingBlock` | boolean | `false` | Hide thinking blocks in output |
+| `collapsedToolOutput` | boolean | `false` | Show each run of tool calls as one compact line (e.g. `[5 tool calls in 54.0s]`) instead of the full tool call and result output. Assistant thoughts and text stay visible |
 | `showCacheMissNotices` | boolean | `false` | Show transcript notices for significant prompt-cache misses and compaction or branch-summary usage |
 | `thinkingBudgets` | object | - | Custom token budgets per thinking level. Anthropic, Google, and Bedrock use these natively. OpenAI-compatible models use them when `compat.thinkingTokenBudgetField` (or `supportsThinkingTokenBudget`) is set. |
 
