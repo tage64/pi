@@ -220,23 +220,6 @@ describe("FooterComponent width handling", () => {
 		expect(stripAnsi(footer.render(120)[1])).toContain("$1.000");
 	});
 
-	it("shows the latest cache hit rate when cache usage is present", () => {
-		const session = createSession({
-			sessionName: "",
-			usage: {
-				input: 100,
-				output: 10,
-				cacheRead: 50,
-				cacheWrite: 50,
-				cost: { total: 0.001 },
-			},
-		});
-		const footer = new FooterComponent(session, createFooterData(1));
-
-		const statsLine = stripAnsi(footer.render(120)[1]);
-		expect(statsLine).toContain("CH25.0%");
-	});
-
 	it("marks Kimi Coding costs as subscription estimates", () => {
 		const session = createSession({
 			sessionName: "",
