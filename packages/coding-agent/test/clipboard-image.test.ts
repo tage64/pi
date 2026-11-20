@@ -10,6 +10,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/utils/clipboard-command.ts", () => ({ runClipboardCommand: mocks.command }));
+vi.mock("../src/utils/wsl.ts", () => ({
+	isWSL: (env: NodeJS.ProcessEnv = process.env) => Boolean(env.WSL_DISTRO_NAME || env.WSLENV),
+}));
 vi.mock("@earendil-works/pi-tui", () => ({ getNativeClipboard: mocks.getNativeClipboard }));
 
 function commandResult(stdout: Buffer, status = 0): Buffer | undefined {
