@@ -33,6 +33,7 @@ import {
 	type SessionProjection,
 	sessionEntryToContextMessages,
 } from "../session-manager.ts";
+import { tokenRateMeter } from "../token-rate-meter.ts";
 import { combineUsage } from "../usage-totals.ts";
 import {
 	computeFileLists,
@@ -630,10 +631,32 @@ export async function completeSummarization(
 		cacheRetention: "none",
 		sessionId: options.sessionId ?? uuidv7(),
 	};
-	const produce = async (): Promise<AssistantMessage> =>
-		streamFn
-			? (await streamFn(model, context, requestOptions)).result()
-			: completeSimple(model, context, requestOptions);
+	const produce = async (): Promise<AssistantMessage> => {
+		if (!streamFn) return completeSimple(model, context, requestOptions);
+
+		// Summarization bypasses agent session events. Observe it here so context
+		// maintenance provides the same throughput and stall feedback as generation.
+		const stream = await streamFn(model, context, requestOptions);
+		try {
+			for await (const event of stream) {
+				if (event.type === "text_delta" || event.type === "thinking_delta" || event.type === "toolcall_delta") {
+					tokenRateMeter.delta("compaction", event.delta.length);
+				}
+			}
+			const message = await stream.result();
+			if (message.stopReason === "aborted" || message.stopReason === "error") {
+				tokenRateMeter.discard("compaction");
+			} else {
+				tokenRateMeter.settle("compaction", message.usage.output);
+			}
+			return message;
+		} catch (error) {
+			// A retry starts a fresh measurement instead of displaying its failed attempt.
+			tokenRateMeter.discard("compaction");
+			throw error;
+		}
+	};
+
 	return retryAssistantCall(produce, retry, requestOptions.signal, callbacks);
 }
 

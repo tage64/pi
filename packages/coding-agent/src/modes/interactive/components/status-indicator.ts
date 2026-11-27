@@ -30,6 +30,28 @@ export class StatusIndicator extends Loader {
 		return truncateToWidth(this.getRenderedIndicator(), width, "");
 	}
 
+	private spinnerPaused = false;
+
+	override setIndicator(indicator?: WorkingIndicatorOptions): void {
+		super.setIndicator(indicator);
+		// Extension frame changes must not make a stalled stream look active.
+		if (this.spinnerPaused) this.stop();
+	}
+
+	/** Freeze on the current frame so motion indicates active model output. */
+	pauseSpinner(): void {
+		if (this.spinnerPaused) return;
+		this.spinnerPaused = true;
+		this.stop();
+	}
+
+	/** Resume the original animation without discarding custom frames. */
+	resumeSpinner(): void {
+		if (!this.spinnerPaused) return;
+		this.spinnerPaused = false;
+		this.start();
+	}
+
 	dispose(): void {
 		this.stop();
 	}
@@ -95,6 +117,9 @@ export class PausedStatusIndicator extends StatusIndicator {
 export type CompactionStatusReason = "manual" | "threshold" | "overflow";
 
 export class CompactionStatusIndicator extends StatusIndicator {
+	/** Keep the label independent of the live rate so updates cannot duplicate the suffix. */
+	readonly baseMessage: string;
+
 	constructor(ui: TUI, reason: CompactionStatusReason, colorFn?: (text: string) => string) {
 		const cancelHint = `(${keyText("app.interrupt")} to cancel)`;
 		const label =
@@ -108,6 +133,7 @@ export class CompactionStatusIndicator extends StatusIndicator {
 			colorFn ?? ((text) => theme.fg("muted", text)),
 			label,
 		);
+		this.baseMessage = label;
 	}
 }
 

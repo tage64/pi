@@ -95,6 +95,38 @@ describe("status indicators", () => {
 		}
 	});
 
+	it("pauses and resumes custom spinner frames without restarting them", () => {
+		initTheme("dark");
+		vi.useFakeTimers();
+		const tui = { requestRender: vi.fn() } as unknown as TUI;
+		const indicator = new WorkingStatusIndicator(tui, "Working", {
+			frames: ["0", "1", "2"],
+			intervalMs: 100,
+		});
+
+		try {
+			indicator.pauseSpinner();
+			const paused = stripAnsi(indicator.render(20)[1]!);
+			vi.advanceTimersByTime(1000);
+			expect(stripAnsi(indicator.render(20)[1]!)).toBe(paused);
+
+			indicator.setIndicator({ frames: ["3", "4"], intervalMs: 100 });
+			const updated = stripAnsi(indicator.render(20)[1]!);
+			vi.advanceTimersByTime(1000);
+			expect(stripAnsi(indicator.render(20)[1]!)).toBe(updated);
+
+			indicator.resumeSpinner();
+			indicator.resumeSpinner();
+			vi.advanceTimersByTime(100);
+			expect(stripAnsi(indicator.render(20)[1]!)).toContain("4 Working");
+			indicator.resumeSpinner();
+			vi.advanceTimersByTime(100);
+			expect(stripAnsi(indicator.render(20)[1]!)).toContain("3 Working");
+		} finally {
+			indicator.dispose();
+		}
+	});
+
 	it("disposes retry countdown updates", () => {
 		initTheme("dark");
 		vi.useFakeTimers();

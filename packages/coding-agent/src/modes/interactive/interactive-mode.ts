@@ -125,6 +125,7 @@ import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import { getSourcePackageKey, type SourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
+import { type TokenRateState, tokenRateMeter } from "../../core/token-rate-meter.ts";
 import { withBuiltInRenderers } from "../../core/tools/renderers/index.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
@@ -559,6 +560,11 @@ export class InteractiveMode {
 	private activeWorkingIndicatorEmbedded = false;
 	private readonly idleStatus = new IdleStatus();
 	private workingMessage: string | undefined = undefined;
+	// Keep throughput independent of status text so indicator transitions and
+	// extension message updates do not discard it.
+	private tokenRateState: TokenRateState = { kind: "none", flowing: false, text: "" };
+	private unsubscribeTokenRate?: () => void;
+	private pendingSummarizationRate: string | undefined;
 	private workingVisible = true;
 	private workingIndicatorOptions: WorkingIndicatorOptions | undefined = undefined;
 	private readonly defaultWorkingMessage = "Working";
@@ -2523,6 +2529,45 @@ export class InteractiveMode {
 		return true;
 	}
 
+	/** Keep the latest measured rate visible between streams and tool calls. */
+	private composeRateMessage(base: string): string {
+		return this.tokenRateState.text ? `${base} — ${this.tokenRateState.text}` : base;
+	}
+
+	/** Show generation throughput and stalls on working and compaction indicators. */
+	private refreshTokenRateRow(): void {
+		const indicator = this.activeStatusIndicator;
+		if (!indicator) return;
+		if (indicator.kind === "working") {
+			indicator.setMessage(this.composeRateMessage(this.workingMessage ?? this.defaultWorkingMessage));
+		} else if (indicator instanceof CompactionStatusIndicator) {
+			indicator.setMessage(this.composeRateMessage(indicator.baseMessage));
+		} else {
+			return;
+		}
+		if (this.tokenRateState.kind === "live" && !this.tokenRateState.flowing) {
+			indicator.pauseSpinner();
+		} else {
+			indicator.resumeSpinner();
+		}
+		this.ui.requestRender();
+	}
+
+	private handleTokenRateState(state: TokenRateState): void {
+		this.tokenRateState = state;
+		if (state.kind === "settled" && state.source === "compaction") {
+			const indicatorKind = this.activeStatusIndicator?.kind;
+			if (indicatorKind === "compaction" || indicatorKind === "branchSummary") {
+				// These operations rebuild the chat on completion, so publish their
+				// final rate afterwards rather than letting that rebuild discard it.
+				this.pendingSummarizationRate = state.text;
+			} else {
+				this.showStatus(state.text);
+			}
+		}
+		this.refreshTokenRateRow();
+	}
+
 	private showStatusIndicator(indicator: StatusIndicator): void {
 		this.activeStatusIndicator?.dispose();
 		this.activeStatusIndicator = indicator;
@@ -2565,11 +2610,12 @@ export class InteractiveMode {
 		this.showStatusIndicator(
 			new WorkingStatusIndicator(
 				this.ui,
-				this.workingMessage ?? this.defaultWorkingMessage,
+				this.composeRateMessage(this.workingMessage ?? this.defaultWorkingMessage),
 				this.workingIndicatorOptions,
 				colorFn,
 			),
 		);
+		this.refreshTokenRateRow();
 	}
 
 	private setWorkingVisible(visible: boolean): void {
@@ -2855,7 +2901,7 @@ export class InteractiveMode {
 			setWorkingMessage: (message) => {
 				this.workingMessage = message;
 				if (this.activeStatusIndicator?.kind === "working") {
-					this.activeStatusIndicator.setMessage(message ?? this.defaultWorkingMessage);
+					this.activeStatusIndicator.setMessage(this.composeRateMessage(message ?? this.defaultWorkingMessage));
 				}
 			},
 			setWorkingVisible: (visible) => this.setWorkingVisible(visible),
@@ -3618,6 +3664,9 @@ export class InteractiveMode {
 	}
 
 	private subscribeToAgent(): void {
+		if (!this.unsubscribeTokenRate) {
+			this.unsubscribeTokenRate = tokenRateMeter.subscribe((state) => this.handleTokenRateState(state));
+		}
 		this.unsubscribe = this.session.subscribe(async (event) => {
 			await this.handleEvent(event);
 		});
@@ -3633,6 +3682,7 @@ export class InteractiveMode {
 
 		switch (event.type) {
 			case "agent_start":
+				tokenRateMeter.resetRunTotals();
 				this.pendingTools.clear();
 				this.settleToolRunSummaries();
 				// Restore main escape handler if retry handler is still active
@@ -3745,6 +3795,16 @@ export class InteractiveMode {
 				break;
 
 			case "message_update":
+				if (event.message.role === "assistant") {
+					const tpsEvent = event.assistantMessageEvent;
+					if (
+						tpsEvent.type === "text_delta" ||
+						tpsEvent.type === "thinking_delta" ||
+						tpsEvent.type === "toolcall_delta"
+					) {
+						tokenRateMeter.delta("agent", tpsEvent.delta.length);
+					}
+				}
 				if (this.streamingComponent && event.message.role === "assistant") {
 					this.streamingMessage = event.message;
 					// Visible assistant text ends the current tool run; the summary
@@ -3782,6 +3842,14 @@ export class InteractiveMode {
 
 			case "message_end":
 				if (event.message.role === "user") break;
+				// Final usage makes the rate exact; failed and aborted requests do not contribute.
+				if (event.message.role === "assistant") {
+					if (event.message.stopReason === "aborted" || event.message.stopReason === "error") {
+						tokenRateMeter.discard("agent");
+					} else {
+						tokenRateMeter.settle("agent", event.message.usage.output);
+					}
+				}
 				if (this.streamingComponent && event.message.role === "assistant") {
 					this.streamingMessage = event.message;
 					let errorMessage: string | undefined;
@@ -3875,14 +3943,20 @@ export class InteractiveMode {
 				this.ui.requestRender();
 				break;
 
-			case "agent_settled":
+			case "agent_settled": {
+				// Measure only model generation across the run, excluding tool execution
+				// and time to first token.
+				const tpsAggregate = tokenRateMeter.takeRunAggregate();
+				if (tpsAggregate) this.showStatus(tpsAggregate.text);
 				// The session records deferred user bash results when the run settles; show them there too.
 				this.flushPendingBashComponents();
 				this.ui.requestRender();
 				await this.checkShutdownRequested();
 				break;
+			}
 
 			case "compaction_start": {
+				this.pendingSummarizationRate = undefined;
 				if (this.settingsManager.getShowTerminalProgress()) {
 					this.ui.terminal.setProgress(true);
 				}
@@ -3949,6 +4023,9 @@ export class InteractiveMode {
 						this.chatContainer.addChild(new ThemedText(() => theme.fg("error", errorMessage), 1, 0));
 					}
 				}
+				const compactionRate = this.pendingSummarizationRate;
+				this.pendingSummarizationRate = undefined;
+				if (compactionRate) this.showStatus(compactionRate);
 				void this.flushCompactionQueue({ willRetry: event.willRetry });
 				this.ui.requestRender();
 				break;
@@ -6039,6 +6116,7 @@ export class InteractiveMode {
 					const originalOnEscape = this.defaultEditor.onEscape;
 
 					if (wantsSummary) {
+						this.pendingSummarizationRate = undefined;
 						this.defaultEditor.onEscape = () => {
 							this.session.abortBranchSummary();
 						};
@@ -6071,11 +6149,14 @@ export class InteractiveMode {
 						if (result.editorText && !this.editor.getText().trim()) {
 							this.editor.setText(result.editorText);
 						}
-						this.showStatus("Navigated to selected point");
+						const summarizationRate = this.pendingSummarizationRate;
+						this.pendingSummarizationRate = undefined;
+						this.showStatus(`Navigated to selected point${summarizationRate ? ` · ${summarizationRate}` : ""}`);
 						void this.flushCompactionQueue({ willRetry: false });
 					} catch (error) {
 						this.showError(error instanceof Error ? error.message : String(error));
 					} finally {
+						this.pendingSummarizationRate = undefined;
 						if (showingSummaryIndicator) {
 							this.clearStatusIndicator("branchSummary");
 						}
@@ -7557,6 +7638,8 @@ export class InteractiveMode {
 		this.clearExtensionTerminalInputListeners();
 		this.footer.dispose();
 		this.footerDataProvider.dispose();
+		this.unsubscribeTokenRate?.();
+		this.unsubscribeTokenRate = undefined;
 		if (this.unsubscribe) {
 			this.unsubscribe();
 		}
